@@ -161,8 +161,7 @@ fn print_info(img: &Image) {
             d.number,
             d.names
                 .iter()
-                .filter(|s| !s.trim().is_empty())
-                .next_back()
+                .rfind(|s| !s.trim().is_empty())
                 .map(|s| s.trim())
                 .unwrap_or(""),
             human(disk_size(d)),

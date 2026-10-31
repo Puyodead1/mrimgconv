@@ -49,17 +49,16 @@ fn compress(st: &mut [u32; 4], chunk: &[u8]) {
 
 pub fn md5(data: &[u8]) -> [u8; 16] {
     let mut st = [0x67452301u32, 0xefcdab89, 0x98badcfe, 0x10325476];
-    let mut chunks = data.chunks_exact(64);
-    for c in &mut chunks {
+    let (chunks, rem) = data.as_chunks::<64>();
+    for c in chunks {
         compress(&mut st, c);
     }
-    let rem = chunks.remainder();
     let mut tail = [0u8; 128];
     tail[..rem.len()].copy_from_slice(rem);
     tail[rem.len()] = 0x80;
     let tl = if rem.len() < 56 { 64 } else { 128 };
     tail[tl - 8..tl].copy_from_slice(&((data.len() as u64) * 8).to_le_bytes());
-    for c in tail[..tl].chunks_exact(64) {
+    for c in tail[..tl].as_chunks::<64>().0 {
         compress(&mut st, c);
     }
     let mut out = [0u8; 16];
