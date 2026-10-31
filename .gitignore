@@ -1,0 +1,10 @@
+/target
+
+# Reverse-engineering workspace: proprietary Macrium binaries, IDA databases and logs
+# must never be committed. Only the helper scripts in re/ are tracked.
+/re/*
+!/re/*.py
+
+*.mrimg
+*.vhd
+*.vhdx
