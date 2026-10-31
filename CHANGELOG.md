@@ -1,6 +1,6 @@
 ﻿# Changelog
 
-## [Unreleased]
+## [0.2.0] - 2026-10-31
 
 - Renamed from `mrimg2vhd` to `mrimgconv`, since it no longer only writes VHDs.
 - New sparse raw image output (`.img`) for Linux: attach with `losetup -P`. Unused space is
