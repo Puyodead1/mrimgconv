@@ -1,13 +1,13 @@
 [package]
-name = "mrimg2vhd"
+name = "mrimgconv"
 version = "0.1.0"
 edition = "2021"
-description = "Convert Macrium Reflect .mrimg disk images to dynamic (sparse) VHD files"
+description = "Convert Macrium Reflect .mrimg disk images to dynamic VHD or sparse raw disk images"
 license = "MIT"
 authors = ["Puyodead1"]
-repository = "https://github.com/Puyodead1/mrimg2vhd"
+repository = "https://github.com/Puyodead1/mrimgconv"
 readme = "README.md"
-keywords = ["macrium", "mrimg", "vhd", "backup", "disk-image"]
+keywords = ["macrium", "mrimg", "vhd", "raw-image", "disk-image"]
 categories = ["command-line-utilities", "filesystem"]
 exclude = ["/re", "/.github"]
 

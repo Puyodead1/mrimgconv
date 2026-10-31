@@ -34,9 +34,9 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          name=mrimg2vhd-${GITHUB_REF_NAME}-${{ matrix.target }}
+          name=mrimgconv-${GITHUB_REF_NAME}-${{ matrix.target }}
           mkdir "$name"
-          cp target/${{ matrix.target }}/release/mrimg2vhd${{ matrix.ext }} README.md LICENSE "$name/"
+          cp target/${{ matrix.target }}/release/mrimgconv${{ matrix.ext }} README.md LICENSE "$name/"
           if [ "${{ matrix.os }}" = windows-latest ]; then
             7z a "$name.zip" "$name" >/dev/null
           else
@@ -46,8 +46,8 @@ jobs:
         with:
           name: ${{ matrix.target }}
           path: |
-            mrimg2vhd-*.zip
-            mrimg2vhd-*.tar.gz
+            mrimgconv-*.zip
+            mrimgconv-*.tar.gz
 
   release:
     needs: build
@@ -56,11 +56,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-      - run: sha256sum mrimg2vhd-*.zip mrimg2vhd-*.tar.gz > SHA256SUMS.txt
+      - run: sha256sum mrimgconv-*.zip mrimgconv-*.tar.gz > SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
-            mrimg2vhd-*.zip
-            mrimg2vhd-*.tar.gz
+            mrimgconv-*.zip
+            mrimgconv-*.tar.gz
             SHA256SUMS.txt

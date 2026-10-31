@@ -1,33 +1,53 @@
-# mrimg2vhd
+# mrimgconv
 
-Converts a Macrium Reflect 8 `.mrimg` disk image into a **dynamic VHD** that Windows can
-mount natively (no Macrium driver needed), so you can browse the backed-up files in Explorer.
+Converts a Macrium Reflect 8 `.mrimg` disk image into a disk image you can mount without
+Macrium, so you can browse the backed-up files:
 
-Dynamic VHDs only store 2 MiB blocks that contain data, so a 500 GB disk with 22 GB used
-becomes a ~22 GB file. (Windows refuses to mount NTFS-*sparse* fixed VHDs, which is why
-the dynamic format is used instead.)
+- **Dynamic VHD** (`.vhd`): Windows mounts it natively. Only 2 MiB blocks that contain data
+  are stored, so a 500 GB disk with 22 GB used becomes a ~22 GB file. (Windows refuses to
+  mount NTFS-*sparse* fixed VHDs, which is why the dynamic format is used.)
+- **Sparse raw image** (`.img`): a plain byte-for-byte disk image for Linux (`losetup`,
+  `mount -o loop`, `kpartx`, QEMU, ...). Unused space is left as file holes, so it also only
+  takes the used size on disk, on any filesystem with sparse file support (ext4, XFS, Btrfs,
+  APFS, NTFS).
 
 ## Install
 
 Download a prebuilt binary for Windows, Linux or macOS from the
-[Releases](https://github.com/Puyodead1/mrimg2vhd/releases) page, or build from source:
+[Releases](https://github.com/Puyodead1/mrimgconv/releases) page, or build from source:
 
 ```
 cargo build --release
 ```
 
-Produces `target/release/mrimg2vhd.exe` (no dependencies). The converter itself is portable;
-only mounting the resulting VHD is Windows-specific.
+Produces `target/release/mrimgconv` (no dependencies).
 
 ## Use
 
 ```
-mrimg2vhd image.mrimg                # writes image.vhd next to the image
-mrimg2vhd image.mrimg -o D:\out.vhd
-mrimg2vhd image.mrimg --info         # show disks / partitions / used blocks
+mrimgconv image.mrimg                # image.vhd on Windows, image.img elsewhere
+mrimgconv image.mrimg -o D:\out.vhd
+mrimgconv image.mrimg -o out.img     # format follows the extension (.vhd, or .img/.raw/.bin)
+mrimgconv image.mrimg -f img         # or pick it explicitly: -f vhd | -f img
+mrimgconv image.mrimg --info         # show disks / partitions / used blocks
 ```
 
-Then mount read-only (recommended, so nothing on the backup copy changes):
+### Linux (raw image)
+
+Attach read-only with partition scanning, then mount the partition you want:
+
+```
+sudo losetup -r -P -f --show out.img     # prints e.g. /dev/loop0
+sudo mount -o ro /dev/loop0p2 /mnt
+```
+
+Unmount with `sudo umount /mnt && sudo losetup -d /dev/loop0`. Keep the image on a filesystem
+that supports sparse files, and copy it with `cp --sparse=always` / `rsync -S` so the holes
+are preserved.
+
+### Windows (VHD)
+
+Mount read-only (recommended, so nothing on the backup copy changes):
 
 ```
 Mount-DiskImage -ImagePath D:\out.vhd -Access ReadOnly
@@ -37,7 +57,9 @@ or double-click the `.vhd`. If the original disk is still attached to the same m
 Windows may keep the VHD offline because of a disk-ID collision; bring it online in Disk
 Management. Unmount with `Dismount-DiskImage -ImagePath D:\out.vhd`.
 
-Options: `--disk N` (convert one disk of a multi-disk image), `--no-verify` (skip per-block
+### Options
+
+`-f vhd|img` (output format), `--disk N` (convert one disk of a multi-disk image), `--no-verify` (skip per-block
 MD5 check), `--ignore-errors` (zero-fill corrupt blocks instead of aborting).
 
 ## Limitations

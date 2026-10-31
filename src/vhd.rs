@@ -110,7 +110,7 @@ impl VhdWriter {
             .as_secs()
             .saturating_sub(946_684_800);
         footer[24..28].copy_from_slice(&(ts as u32).to_be_bytes());
-        footer[28..32].copy_from_slice(b"mr2v");
+        footer[28..32].copy_from_slice(b"mrcv");
         footer[32..36].copy_from_slice(&0x0001_0000u32.to_be_bytes());
         footer[36..40].copy_from_slice(b"Wi2k");
         footer[40..48].copy_from_slice(&size.to_be_bytes());

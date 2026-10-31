@@ -1,9 +1,11 @@
 mod catalog;
 mod codec;
 mod md5;
+mod raw;
 mod vhd;
 
 use catalog::{BlockRec, Disk, Image};
+use raw::RawWriter;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -12,12 +14,14 @@ use std::time::Instant;
 use vhd::VhdWriter;
 
 const USAGE: &str = "\
-mrimg2vhd - convert a Macrium Reflect .mrimg disk image into a dynamic (sparse) VHD
+mrimgconv - convert a Macrium Reflect .mrimg disk image into a dynamic VHD or a sparse raw image
 
-usage: mrimg2vhd <image.mrimg> [options]
+usage: mrimgconv <image.mrimg> [options]
 
 options:
-  -o, --output <path>   output .vhd (default: next to the image; _diskN suffix for multi-disk images)
+  -o, --output <path>   output file (default: next to the image; _diskN suffix for multi-disk images)
+  -f, --format <fmt>    vhd or img (sparse raw disk image). Default: from the --output
+                        extension (.img/.raw/.bin = img), else vhd on Windows and img elsewhere
       --disk <N>        only convert the N-th disk in the image (0-based)
       --info            print image layout and exit
       --no-verify       skip MD5 verification of each block
@@ -26,11 +30,92 @@ options:
 
 The VHD can be mounted read-only in Windows with:
   Mount-DiskImage -ImagePath <file.vhd> -Access ReadOnly
+The raw image can be attached read-only in Linux with:
+  sudo losetup -r -P -f --show <file.img>   (then mount /dev/loopNpM)
 ";
+
+#[derive(Clone, Copy)]
+enum Format {
+    Vhd,
+    Img,
+}
+
+impl Format {
+    fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "vhd" => Some(Format::Vhd),
+            "img" | "raw" | "bin" => Some(Format::Img),
+            _ => None,
+        }
+    }
+
+    fn ext(self) -> &'static str {
+        match self {
+            Format::Vhd => "vhd",
+            Format::Img => "img",
+        }
+    }
+
+    /// Explicit --format, else the --output extension, else the platform default.
+    fn resolve(explicit: Option<Self>, output: Option<&str>) -> Self {
+        let from_ext = output
+            .and_then(|p| Path::new(p).extension())
+            .and_then(|e| Format::parse(&e.to_string_lossy()));
+        explicit.or(from_ext).unwrap_or(if cfg!(windows) {
+            Format::Vhd
+        } else {
+            Format::Img
+        })
+    }
+}
+
+enum Writer {
+    Vhd(Box<VhdWriter>),
+    Img(RawWriter),
+}
+
+impl Writer {
+    fn create(fmt: Format, path: &str, size: u64) -> io::Result<Self> {
+        Ok(match fmt {
+            Format::Vhd => Writer::Vhd(Box::new(VhdWriter::create(path, size)?)),
+            Format::Img => Writer::Img(RawWriter::create(path, size)?),
+        })
+    }
+
+    fn size(&self) -> u64 {
+        match self {
+            Writer::Vhd(w) => w.size(),
+            Writer::Img(w) => w.size(),
+        }
+    }
+
+    fn write_at(&mut self, off: u64, data: &[u8]) -> io::Result<()> {
+        match self {
+            Writer::Vhd(w) => w.write_at(off, data),
+            Writer::Img(w) => w.write_at(off, data),
+        }
+    }
+
+    /// Bytes of disk data actually stored in the output.
+    fn stored_bytes(&self) -> u64 {
+        match self {
+            Writer::Vhd(w) => w.allocated_blocks * vhd::BLOCK,
+            Writer::Img(w) => w.data_bytes(),
+        }
+    }
+
+    fn finish(self) -> io::Result<u64> {
+        match self {
+            Writer::Vhd(w) => w.finish(),
+            Writer::Img(w) => w.finish(),
+        }
+    }
+}
 
 struct Opts {
     input: String,
     output: Option<String>,
+    format: Option<Format>,
     disk: Option<usize>,
     info: bool,
     verify: bool,
@@ -42,6 +127,7 @@ fn parse_args() -> Result<Opts, String> {
     let mut o = Opts {
         input: String::new(),
         output: None,
+        format: None,
         disk: None,
         info: false,
         verify: true,
@@ -51,6 +137,10 @@ fn parse_args() -> Result<Opts, String> {
         match x.as_str() {
             "-h" | "--help" => return Err(String::new()),
             "-o" | "--output" => o.output = Some(a.next().ok_or("missing value for --output")?),
+            "-f" | "--format" => {
+                let v = a.next().ok_or("missing value for --format")?;
+                o.format = Some(Format::parse(&v).ok_or(format!("bad --format {v} (vhd or img)"))?)
+            }
             "--disk" => {
                 o.disk = Some(
                     a.next()
@@ -287,11 +377,17 @@ fn convert_disk(
     d: &Disk,
     src: &mut Source,
     out_path: &str,
+    fmt: Format,
     o: &Opts,
 ) -> Result<(), String> {
     let size = disk_size(d);
-    let mut vhd = VhdWriter::create(out_path, size).map_err(|e| format!("{out_path}: {e}"))?;
+    let mut vhd = Writer::create(fmt, out_path, size).map_err(|e| format!("{out_path}: {e}"))?;
     println!("writing {out_path} (virtual size {})", human(vhd.size()));
+    if let Writer::Img(r) = &vhd {
+        if !r.sparse {
+            eprintln!("warning: filesystem does not support sparse files; the image will use its full size on disk");
+        }
+    }
     let w = |r: io::Result<()>| r.map_err(|e| format!("write error: {e}"));
 
     w(vhd.write_at(0, &d.track0))?;
@@ -420,13 +516,13 @@ fn convert_disk(
         }
     }
 
-    let alloc = vhd.allocated_blocks;
+    let stored = vhd.stored_bytes();
     let total = vhd.finish().map_err(|e| format!("finalize error: {e}"))?;
     println!(
-        "done in {:.0}s: {} blocks, {} allocated in VHD -> file size {}{}",
+        "done in {:.0}s: {} blocks, {} of data stored -> file size {}{}",
         started.elapsed().as_secs_f64(),
         done,
-        human(alloc * vhd::BLOCK),
+        human(stored),
         human(total),
         if bad > 0 {
             format!(", {bad} bad block(s) zero-filled")
@@ -459,6 +555,8 @@ fn run(o: &Opts) -> Result<(), String> {
         }
         None => (0..img.disks.len()).collect(),
     };
+    let fmt = Format::resolve(o.format, o.output.as_deref());
+    let ext = fmt.ext();
     let mut src = Source::new(&o.input);
     for &i in &selected {
         let out = match &o.output {
@@ -466,7 +564,7 @@ fn run(o: &Opts) -> Result<(), String> {
             Some(p) => {
                 let pb = Path::new(p);
                 let stem = pb.file_stem().unwrap_or_default().to_string_lossy();
-                pb.with_file_name(format!("{stem}_disk{i}.vhd"))
+                pb.with_file_name(format!("{stem}_disk{i}.{ext}"))
                     .to_string_lossy()
                     .into()
             }
@@ -474,14 +572,14 @@ fn run(o: &Opts) -> Result<(), String> {
                 let pb = Path::new(&o.input);
                 let stem = pb.file_stem().unwrap_or_default().to_string_lossy();
                 let name = if img.disks.len() == 1 {
-                    format!("{stem}.vhd")
+                    format!("{stem}.{ext}")
                 } else {
-                    format!("{stem}_disk{i}.vhd")
+                    format!("{stem}_disk{i}.{ext}")
                 };
                 pb.with_file_name(name).to_string_lossy().into()
             }
         };
-        convert_disk(&img, &img.disks[i], &mut src, &out, o)?;
+        convert_disk(&img, &img.disks[i], &mut src, &out, fmt, o)?;
     }
     Ok(())
 }
